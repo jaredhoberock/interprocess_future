@@ -42,6 +42,7 @@
 #include <unistd.h>
 
 #include "serialization.hpp"
+#include "optional.hpp"
 
 
 class file_descriptor_ostream : public std::ostream
@@ -169,21 +170,21 @@ class interprocess_future
 {
   public:
     interprocess_future(std::istream& is)
-      : is_(is), value_(new T())
+      : is_(is), result_(T())
     {}
 
     T get()
     {
       wait();
 
-      if(!value_)
+      if(!result_)
       {
         throw std::future_error(std::future_errc::future_already_retrieved);
       }
 
-      T result = std::move(*value_);
+      T result = std::move(*result_);
 
-      value_.reset();
+      result_.reset();
 
       return result;
     }
@@ -201,7 +202,7 @@ class interprocess_future
         {
           input_archive ar(is_);
 
-          ar(*value_);
+          ar(*result_);
         }
 
         is_.setstate(std::ios_base::eofbit);
@@ -210,13 +211,12 @@ class interprocess_future
 
     bool valid() const
     {
-      return static_cast<bool>(value_);
+      return static_cast<bool>(result_);
     }
 
   private:
     std::istream& is_;
-    // XXX this should be optional<T> rather than unique_ptr<T>
-    std::unique_ptr<T> value_;
+    optional<T> result_;
 };
 
 template<class T>

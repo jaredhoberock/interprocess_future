@@ -91,5 +91,5 @@ int main()
 }
 ```
 
-See also `new_process_executor`, which streamlines this process and also demonstrates execution in separate processes.
+See also [`new_process_executor`](https://github.com/jaredhoberock/new_process_executor), which streamlines usage and also demonstrates execution in separate processes.
 

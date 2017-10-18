@@ -33,6 +33,8 @@
 #include <sstream>
 #include <cstring>
 
+#include "variant.hpp"
+
 
 #define __REQUIRES(...) typename std::enable_if<(__VA_ARGS__)>::type* = nullptr
 
@@ -143,6 +145,66 @@ void deserialize(InputArchive& ar, std::tuple<Ts...>& tuple)
 {
   deserialize_tuple_impl<0>(ar, tuple);
 }
+
+
+template<class OutputArchive>
+struct serialize_visitor
+{
+  OutputArchive& ar;
+
+  template<class T>
+  void operator()(const T& value) const
+  {
+    ar(value);
+  }
+};
+
+
+template<class OutputArchive, class... Types>
+void serialize(OutputArchive& ar, const variant<Types...>& v)
+{
+  // serialize the index
+  ar(v.index());
+
+  // serialize the value
+  visit(serialize_visitor<OutputArchive>{ar}, v);
+}
+
+
+template<size_t i, class InputArchive, class... Ts, __REQUIRES(i == sizeof...(Ts))>
+void deserialize_variant_impl(InputArchive& ar, size_t index, variant<Ts...>& v)
+{
+  throw std::runtime_error("deserialize(InputArchive,variant): invalid index.");
+}
+
+template<size_t i, class InputArchive, class... Ts, __REQUIRES(i < sizeof...(Ts))>
+void deserialize_variant_impl(InputArchive& ar, size_t index, variant<Ts...>& v)
+{
+  if(index == i)
+  {
+    variant_alternative_t<i, variant<Ts...>> value;
+    ar(value);
+
+    v = value;
+  }
+  else
+  {
+    deserialize_variant_impl<i+1>(ar, index, v);
+  }
+}
+
+template<class InputArchive, class... Types>
+void deserialize(InputArchive& ar, variant<Types...>& v)
+{
+  // deserialize the index
+  size_t index;
+  ar(index);
+
+  deserialize_variant_impl<0>(ar, index, v);
+}
+
+
+
 
 class output_archive
 {

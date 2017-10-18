@@ -43,6 +43,7 @@
 
 #include "serialization.hpp"
 #include "optional.hpp"
+#include "variant.hpp"
 
 
 class file_descriptor_ostream : public std::ostream
@@ -165,31 +166,78 @@ class file_descriptor_istream : public std::istream
 const int file_descriptor_istream::file_descriptor_buffer::putback_size_;
 
 
+class interprocess_exception
+{
+  public:
+    interprocess_exception()
+      : interprocess_exception("")
+    {}
+
+    explicit interprocess_exception(const std::string& what_arg)
+      : what_(what_arg)
+    {}
+
+    explicit interprocess_exception(const char* what_arg)
+      : interprocess_exception(std::string(what_arg))
+    {}
+
+    const char* what() const
+    {
+      return what_.c_str();
+    }
+
+    template<class InputArchive>
+    friend void deserialize(InputArchive& ar, interprocess_exception& self)
+    {
+      ar(self.what_);
+    }
+
+    template<class OutputArchive>
+    friend void serialize(OutputArchive& ar, const interprocess_exception& self)
+    {
+      ar(self.what_);
+    }
+
+  private:
+    std::string what_;
+}; 
+
+
 template<class T>
 class interprocess_future
 {
   public:
     interprocess_future(std::istream& is)
-      : is_(is), result_(T())
+      : is_(is), result_or_exception_(T())
     {}
 
     T get()
     {
+      // wait for the result to become ready
       wait();
 
-      if(!result_)
+      // after waiting, the result should be available
+      // otherwise, the result has already been retrieved
+      if(!result_or_exception_)
       {
         throw std::future_error(std::future_errc::future_already_retrieved);
       }
 
-      T result = std::move(*result_);
+      // if the result holds an exception, throw it
+      if(holds_alternative<interprocess_exception>(*result_or_exception_))
+      {
+        throw ::get<interprocess_exception>(*result_or_exception_);
+      }
 
-      result_.reset();
+      // move the result into a variable
+      T result = std::move(::get<T>(*result_or_exception_));
+
+      // reset the result's container
+      result_or_exception_.reset();
 
       return result;
     }
 
-    // wait should read a T from the stream
     void wait()
     {
       if(!valid())
@@ -202,7 +250,7 @@ class interprocess_future
         {
           input_archive ar(is_);
 
-          ar(*result_);
+          ar(*result_or_exception_);
         }
 
         is_.setstate(std::ios_base::eofbit);
@@ -211,13 +259,14 @@ class interprocess_future
 
     bool valid() const
     {
-      return static_cast<bool>(result_);
+      return static_cast<bool>(result_or_exception_);
     }
 
   private:
     std::istream& is_;
-    optional<T> result_;
+    optional<variant<T,interprocess_exception>> result_or_exception_;
 };
+
 
 template<class T>
 class interprocess_promise
@@ -231,7 +280,20 @@ class interprocess_promise
     {
       output_archive ar(os_);
 
-      ar(value);
+      // wrap the value in a variant before transmitting
+      variant<T,interprocess_exception> value_or_exception = value;
+
+      ar(value_or_exception);
+    }
+
+    void set_exception(const interprocess_exception& exception)
+    {
+      output_archive ar(os_);
+
+      // wrap the exception in a variant before transmitting
+      variant<T,interprocess_exception> value_or_exception = exception;
+
+      ar(value_or_exception);
     }
 
   private:
